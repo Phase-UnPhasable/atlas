@@ -59,6 +59,8 @@ Cross-device history is available as an opt-in experimental RuneLite-account-syn
 
 Atlas uses the `atlas` configuration group and the Filepath-managed `.runelite/plugin-data/atlas` directory. Each device creates its own device ID and character-specific history files. Cross-device sync is off by default; enable it on each device and sign into the same RuneLite account and OSRS character to share completed history. No separate Atlas account is required.
 
+**Show session value** is on by default. Turn it off to hide the profit/loss badge above the inventory tab. Session tracking, the sidebar value and Session History continue updating while the badge is hidden; turn it back on to show the current value.
+
 ## Manual acceptance checks
 
 ### Login sessions
@@ -83,6 +85,7 @@ Saved/unknown bank data makes a session an **Estimate**. The first actual bank o
 - Check **Session History**: current session is marked Live. Log out and back in; the previous row is saved with the last update time and the new counter starts at zero.
 - Hop worlds: keep the same session rather than adding a completed row.
 - Compare the backpack-tab number with Value changed this session: gains are green, losses red, zero white. Test switching tabs, fixed/resizable layouts and window resizing; the text follows the backpack tab. Logout clears the old value and the next login uses the new session baseline.
+- Toggle **Show session value** off and on without restarting: only the badge should hide/show, and it should return with the current session value. Consume a supply while hidden and confirm the sidebar/history still record it. Restart with the setting off and confirm it stays hidden. The Atlas sidebar icon should be the gold compass A.
 - Existing net-worth graph and item list continue working, and earlier saved wealth data still loads.
 
 ### Wealth totals

@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
@@ -48,12 +49,12 @@ import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.client.callback.ClientThread;
-import net.runelite.client.account.AccountSession;
-import net.runelite.client.account.SessionManager;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ClientShutdown;
 import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.events.SessionOpen;
+import net.runelite.client.events.SessionClose;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -77,7 +78,6 @@ public class AtlasPlugin extends Plugin
     @Inject private ItemManager itemManager;
     @Inject private ConfigManager configManager;
     @Inject private AtlasConfig config;
-    @Inject private SessionManager sessionManager;
     @Inject private ClientToolbar toolbar;
     @Inject private ScheduledExecutorService executor;
     @Inject private Gson gson;
@@ -86,6 +86,8 @@ public class AtlasPlugin extends Plugin
     private volatile boolean active;
     private volatile long generation;
     private volatile long lifetime;
+    // Local cancellation token only; RuneLite owns account credentials and cloud delivery.
+    private final AtomicLong syncContext = new AtomicLong();
     private WealthPanel panel;
     private NavigationButton navigation;
     private InventorySessionOverlay inventorySessionOverlay;
@@ -136,6 +138,7 @@ public class AtlasPlugin extends Plugin
     protected void startUp()
     {
         active = true;
+        syncContext.incrementAndGet();
         long version = ++lifetime;
         store = new WealthStore(gson);
         inventorySessionOverlay = new InventorySessionOverlay(client, config);
@@ -494,19 +497,21 @@ public class AtlasPlugin extends Plugin
         long version = generation;
         WealthStore targetStore = store;
         String rsKey = configManager.getRSProfileKey();
+        long syncVersion = syncContext.get();
         publish("Loading this character's history...");
         enqueueIO(() ->
         {
             try
             {
                 Filepath root = getPluginDirectory();
-                Wealth.State loaded = targetStore.load(root, key).closeSession(true);
+                Wealth.State local = targetStore.load(root, key).closeSession(true);
+                Wealth.State loaded = local;
                 String device = null;
                 String syncNote = "History saved on this device. Not synced.";
                 try
                 {
                     device = targetStore.deviceId(root);
-                    if (config.syncExperimental() && sessionManager.getAccountSession() != null)
+                    if (config.syncExperimental() && syncContext.get() == syncVersion)
                     {
                         targetStore.backupBeforeSync(root, loaded);
                         loaded = mergeHistoryCopies(loaded, rsKey, true);
@@ -525,13 +530,16 @@ public class AtlasPlugin extends Plugin
                     if (!active || generation != version || !key.equals(profile)) { return; }
                     directory = root;
                     // A prior unfinished entry is closed at its last checkpoint, never merged into a new login.
-                    saved = initial;
-                    syncDeviceId = initialDevice; syncMessage = initialSyncNote;
-                    containers.restoreBank(initial.bank);
-                    containers.restoreRemoteBank(initial.extraContainers.get(SoulBearerTracker.REMOTE_BANK_KEY));
-                    herbSack.restore(initial.herbSack);
-                    cannon.restore(initial.extraContainers.get(CannonTracker.STORAGE_KEY));
-                    for (BagTracker bag : bags) { bag.restore(initial.extraContainers.get(bag.kind.name())); }
+                    Wealth.State restored = syncContext.get() == syncVersion ? initial : local;
+                    saved = restored;
+                    syncDeviceId = initialDevice;
+                    syncMessage = syncContext.get() == syncVersion ? initialSyncNote
+                        : "History saved locally. RuneLite manages sign-in and sync delivery.";
+                    containers.restoreBank(restored.bank);
+                    containers.restoreRemoteBank(restored.extraContainers.get(SoulBearerTracker.REMOTE_BANK_KEY));
+                    herbSack.restore(restored.herbSack);
+                    cannon.restore(restored.extraContainers.get(CannonTracker.STORAGE_KEY));
+                    for (BagTracker bag : bags) { bag.restore(restored.extraContainers.get(bag.kind.name())); }
                     bankTime = containers.getBankTime();
                     loading = false;
                     dirty = true;
@@ -815,9 +823,7 @@ public class AtlasPlugin extends Plugin
         boolean observed = bankSynced;
         long version = generation;
         boolean syncEnabled = config.syncExperimental();
-        String syncStatus = !syncEnabled ? "History saved on this device. Not synced."
-            : sessionManager.getAccountSession() == null ? "History saved locally. Sign in to RuneLite to sync."
-            : syncMessage;
+        String syncStatus = !syncEnabled ? "History saved on this device. Not synced." : syncMessage;
         SwingUtilities.invokeLater(() ->
         {
             if (active && generation == version && panel != null)
@@ -837,6 +843,26 @@ public class AtlasPlugin extends Plugin
         if (!sackStatus.isEmpty()) { return sackStatus; }
         return bankSynced ? "Tracking bank + live inventory + equipment"
             : "Saved bank contents + live inventory/equipment. Open your bank when convenient to refresh.";
+    }
+
+    @Subscribe
+    public void onSessionOpen(SessionOpen event) { onSyncAccountChanged(); }
+
+    @Subscribe
+    public void onSessionClose(SessionClose event) { onSyncAccountChanged(); }
+
+    private void onSyncAccountChanged()
+    {
+        long context = syncContext.incrementAndGet();
+        clientThread.invoke(() ->
+        {
+            if (!active || syncContext.get() != context) { return; }
+            syncBusy = false;
+            lastSyncAttempt = 0;
+            syncMessage = "History saved locally. RuneLite manages sign-in and sync delivery.";
+            requestHistorySync(false);
+            publish(saved == null ? "Log in to load this character's history." : trackingStatus());
+        });
     }
 
     @Subscribe
@@ -875,8 +901,8 @@ public class AtlasPlugin extends Plugin
         syncFlushRequested |= flush;
         if (!config.syncExperimental() || syncBusy || loading || saved == null || directory == null || storageFailed) { return; }
         lastSyncAttempt = System.currentTimeMillis();
-        AccountSession account = sessionManager.getAccountSession();
-        if (account == null || syncDeviceId == null) { return; }
+        long syncVersion = syncContext.get();
+        if (syncDeviceId == null) { return; }
         syncBusy = true;
         Wealth.State copy = saved;
         Filepath root = directory;
@@ -886,14 +912,15 @@ public class AtlasPlugin extends Plugin
         {
             try
             {
+                if (!config.syncExperimental() || syncContext.get() != syncVersion) { return; }
                 store.backupBeforeSync(root, copy);
                 Wealth.State merged = mergeHistoryCopies(copy, rsKey, false);
                 String encoded = WealthSync.encode(merged, gson);
                 clientThread.invoke(() ->
                 {
-                    if (!active || generation != version || saved == null) { return; }
+                    if (!active || generation != version || saved == null || syncContext.get() != syncVersion) { return; }
                     syncBusy = false;
-                    if (!config.syncExperimental() || sessionManager.getAccountSession() != account) { return; }
+                    if (!config.syncExperimental()) { return; }
                     if (saved.revision != copy.revision)
                     {
                         // Local loot arrived while merging. Retry from the new state instead of losing it.
@@ -907,7 +934,10 @@ public class AtlasPlugin extends Plugin
                     if (syncFlushRequested)
                     {
                         syncFlushRequested = false;
-                        enqueueIO(configManager::sendConfig);
+                        enqueueIO(() ->
+                        {
+                            if (config.syncExperimental() && syncContext.get() == syncVersion) { configManager.sendConfig(); }
+                        });
                     }
                     publish(trackingStatus());
                 });
@@ -917,7 +947,7 @@ public class AtlasPlugin extends Plugin
                 log.debug("Unable to sync wealth history", ex);
                 clientThread.invoke(() ->
                 {
-                    if (!active || generation != version) { return; }
+                    if (!active || generation != version || syncContext.get() != syncVersion) { return; }
                     syncBusy = false;
                     syncMessage = "Sync paused: " + ex.getMessage() + ". Local history kept.";
                     publish(trackingStatus());
@@ -928,24 +958,28 @@ public class AtlasPlugin extends Plugin
 
     private void syncHistoryNow()
     {
-        if (!config.syncExperimental() || sessionManager.getAccountSession() == null)
-        { publish("Enable cross-device sync in plugin settings and sign in to RuneLite first."); return; }
+        if (!config.syncExperimental())
+        { publish("Enable cross-device sync in plugin settings first."); return; }
         long version = generation;
-        syncMessage = "Checking RuneLite for shared history...";
+        long syncVersion = syncContext.get();
+        syncMessage = "Preparing history for RuneLite sync. Sign in to RuneLite for cloud delivery.";
         publish(saved == null ? "Log in to sync this character's history." : trackingStatus());
-        // RuneLite's sendConfig also fetches changes. Never perform this network operation on the client thread.
+        // Flush queued configuration; RuneLite handles authentication and delivery. Never block the client thread.
         enqueueIO(() ->
         {
+            if (!config.syncExperimental() || syncContext.get() != syncVersion) { return; }
             configManager.sendConfig();
-            clientThread.invoke(() -> { if (active && generation == version) { requestHistorySync(true); } });
+            clientThread.invoke(() ->
+            {
+                if (active && generation == version && syncContext.get() == syncVersion) { requestHistorySync(true); }
+            });
         });
     }
 
     private void exportClosedHistory(Wealth.State closed)
     {
         if (!config.syncExperimental() || syncDeviceId == null || directory == null) { return; }
-        AccountSession account = sessionManager.getAccountSession();
-        if (account == null) { return; }
+        long syncVersion = syncContext.get();
         Filepath root = directory;
         WealthStore targetStore = store;
         String rsKey = configManager.getRSProfileKey(), device = syncDeviceId;
@@ -953,12 +987,12 @@ public class AtlasPlugin extends Plugin
         {
             try
             {
-                if (!config.syncExperimental() || sessionManager.getAccountSession() != account) { return; }
+                if (!config.syncExperimental() || syncContext.get() != syncVersion) { return; }
                 targetStore.backupBeforeSync(root, closed);
                 Wealth.State merged = mergeHistoryCopies(closed, rsKey, false);
                 String encoded = WealthSync.encode(merged, gson);
                 targetStore.save(root, merged);
-                if (!config.syncExperimental() || sessionManager.getAccountSession() != account) { return; }
+                if (!config.syncExperimental() || syncContext.get() != syncVersion) { return; }
                 configManager.setConfiguration(WealthSync.GROUP, rsKey, WealthSync.PREFIX + device, encoded);
                 // Flush this final session even if logout/reset changed the plugin's current profile.
                 configManager.sendConfig();

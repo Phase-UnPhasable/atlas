@@ -912,7 +912,7 @@ public class AtlasPlugin extends Plugin
         {
             try
             {
-                if (!config.syncExperimental() || syncContext.get() != syncVersion) { return; }
+                if (syncContext.get() != syncVersion) { return; }
                 store.backupBeforeSync(root, copy);
                 Wealth.State merged = mergeHistoryCopies(copy, rsKey, false);
                 String encoded = WealthSync.encode(merged, gson);

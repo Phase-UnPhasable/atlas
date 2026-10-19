@@ -1,6 +1,6 @@
 # Experimental cross-device history sync
 
-Enable **Cross-device sync (test)** in plugin settings on both devices, sign into the same RuneLite account and OSRS character, then use **Sync history now** in the sidebar. Enable it before character login on the receiving device to import the saved bank/container checkpoint. When enabled after login, history imports while the running client keeps its own live bank cache; relog to restore a remote checkpoint.
+Enable **Cross-device sync** in plugin settings on both devices, sign into the same RuneLite account and OSRS character, then use **Sync history now** in the sidebar. Enable it before character login on the receiving device to import the saved bank/container checkpoint. When enabled after login, history imports while the running client keeps its own live bank cache; relog to restore a remote checkpoint.
 
 RuneLite transports the data through its character-scoped configuration store, under the `atlas` group. Local files use `.runelite/plugin-data/atlas`. No Atlas account or external service is used. Each device generates a random local ID via Filepath and writes a separate `historyV1_<id>` record. Do not copy `sync-device-id.txt` between devices.
 

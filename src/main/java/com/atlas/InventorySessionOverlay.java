@@ -27,11 +27,13 @@ final class InventorySessionOverlay extends Overlay
         InterfaceID.ToplevelPreEoc.STONE3
     };
     private final Client client;
+    private final AtlasConfig config;
     private volatile Value value;
 
-    InventorySessionOverlay(Client client)
+    InventorySessionOverlay(Client client, AtlasConfig config)
     {
         this.client = client;
+        this.config = config;
         setPosition(OverlayPosition.DYNAMIC);
         setLayer(OverlayLayer.ABOVE_WIDGETS);
     }
@@ -45,7 +47,7 @@ final class InventorySessionOverlay extends Overlay
     public Dimension render(Graphics2D graphics)
     {
         Value current = value;
-        if (current == null || client.getGameState() != GameState.LOGGED_IN) { return null; }
+        if (!config.showSessionValue() || current == null || client.getGameState() != GameState.LOGGED_IN) { return null; }
         for (int id : INVENTORY_TABS)
         {
             Widget tab = client.getWidget(id);

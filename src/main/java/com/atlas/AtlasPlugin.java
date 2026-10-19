@@ -4,6 +4,8 @@ import com.google.gson.Gson;
 import com.google.inject.Provides;
 import java.awt.Color;
 import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -136,7 +138,7 @@ public class AtlasPlugin extends Plugin
         active = true;
         long version = ++lifetime;
         store = new WealthStore(gson);
-        inventorySessionOverlay = new InventorySessionOverlay(client);
+        inventorySessionOverlay = new InventorySessionOverlay(client, config);
         overlayManager.add(inventorySessionOverlay);
         bags.clear();
         for (BagTracker.Kind kind : BagTracker.Kind.values())
@@ -1011,13 +1013,34 @@ public class AtlasPlugin extends Plugin
 
     private static BufferedImage icon()
     {
-        BufferedImage image = new BufferedImage(32, 32, BufferedImage.TYPE_INT_ARGB);
+        BufferedImage image = new BufferedImage(128, 128, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = image.createGraphics();
-        g.setColor(new Color(57, 125, 255));
-        g.fillRoundRect(1, 1, 30, 30, 8, 8);
-        g.setColor(Color.WHITE);
-        g.fillRect(7, 19, 4, 7); g.fillRect(14, 13, 4, 13); g.fillRect(21, 7, 4, 19);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.scale(4, 4);
+        Path2D needle = new Path2D.Double();
+        needle.moveTo(16, 1);
+        needle.lineTo(29.5, 29.5);
+        needle.lineTo(21.5, 25);
+        needle.lineTo(16, 12);
+        needle.lineTo(10.5, 25);
+        needle.lineTo(2.5, 29.5);
+        needle.closePath();
+        g.setColor(new Color(236, 188, 85));
+        g.fill(needle);
+        Path2D crossbar = new Path2D.Double();
+        crossbar.moveTo(11, 20);
+        crossbar.lineTo(21, 20);
+        crossbar.lineTo(23, 24);
+        crossbar.lineTo(9, 24);
+        crossbar.closePath();
+        g.setColor(new Color(255, 232, 172));
+        g.fill(crossbar);
         g.dispose();
-        return image;
+        BufferedImage icon = new BufferedImage(32, 32, BufferedImage.TYPE_INT_ARGB);
+        g = icon.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.drawImage(image, 0, 0, 32, 32, null);
+        g.dispose();
+        return icon;
     }
 }

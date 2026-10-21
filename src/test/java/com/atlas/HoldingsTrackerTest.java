@@ -77,18 +77,57 @@ public class HoldingsTrackerTest
     }
 
     @Test
-    public void missingCarriedDataIsNotZeroAndResetDoesNotReuseAnotherSessionsBank()
+    public void missingInventoryIsNotZeroAndResetDoesNotReuseAnotherSessionsBank()
     {
         HoldingsTracker tracker = tracker();
         assertFalse(tracker.hasBank());
         assertTrue(tracker.combine(EMPTY, EMPTY).isEmpty());
         tracker.observeBank(new Item[]{new Item(1, 50)}, 100);
         assertNull(tracker.combine(null, EMPTY));
-        assertNull(tracker.combine(EMPTY, null));
+        assertArrayEquals(new long[]{50, 0, 0}, tracker.combine(EMPTY, null).get(1));
         tracker.reset();
         assertFalse(tracker.hasBank());
         assertTrue(tracker.combine(EMPTY, EMPTY).isEmpty());
         assertEquals(0L, tracker.getBankTime());
+    }
+
+    @Test
+    public void unequippedLoginStartsSessionAndTracksLootBeforeFirstEquip()
+    {
+        HoldingsTracker tracker = tracker();
+        tracker.restoreBank(new Wealth.Bank(90, java.util.Collections.singletonMap(1, 100L)));
+        SessionTracker session = new SessionTracker(100);
+        session.observe(snapshot(tracker.combine(new Item[]{new Item(1, 10), new Item(2, 1)}, null), 100), false);
+        assertNotNull(session.current());
+        assertEquals(0L, session.current().change);
+
+        session.observe(snapshot(tracker.combine(new Item[]{new Item(1, 15), new Item(2, 1)}, null), 101), false);
+        assertEquals(5L, session.current().change);
+
+        session.observe(snapshot(tracker.combine(new Item[]{new Item(1, 15)},
+            new Item[]{new Item(2, 1)}), 102), false);
+        assertEquals(5L, session.current().change);
+        session.observe(snapshot(tracker.combine(new Item[]{new Item(1, 15), new Item(2, 1)}, EMPTY), 103), false);
+        assertEquals(5L, session.current().change);
+    }
+
+    @Test
+    public void firstEverUnequippedLoginDoesNotRequireBankOrEquipment()
+    {
+        HoldingsTracker tracker = tracker();
+        Map<Integer, long[]> current = tracker.combine(new Item[]{new Item(1, 500)}, null);
+        assertFalse(tracker.hasBank());
+        assertEquals(500L, total(current));
+        assertTrue(tracker.combine(EMPTY, null).isEmpty());
+        assertNull(tracker.combine(null, null));
+    }
+
+    private Wealth.Snapshot snapshot(Map<Integer, long[]> quantities, long time)
+    {
+        Map<Integer, Wealth.Entry> entries = new java.util.LinkedHashMap<>();
+        quantities.forEach((id, q) -> entries.put(id, new Wealth.Entry(id, "Item " + id,
+            q[0], q[1], q[2], id == 1 ? 1 : 104_000_000L, 1, false, true, false)));
+        return new Wealth.Snapshot(time, 90, entries);
     }
 
     @Test

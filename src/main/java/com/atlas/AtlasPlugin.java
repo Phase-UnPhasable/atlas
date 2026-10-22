@@ -565,6 +565,7 @@ public class AtlasPlugin extends Plugin
 
     private boolean capture(long now)
     {
+        if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null) { return false; }
         lastCapture = now;
         // Bank data is only refreshed while observed. A closed/missing bank must not block live gear updates.
         ItemContainer bank = isBankOpen() ? client.getItemContainer(InventoryID.BANK) : null;
@@ -576,12 +577,12 @@ public class AtlasPlugin extends Plugin
         }
         ItemContainer inventory = client.getItemContainer(InventoryID.INV);
         ItemContainer equipment = client.getItemContainer(InventoryID.WORN);
+        Item[] inventoryItems = inventory == null ? new Item[0] : inventory.getItems();
         Map<Integer, long[]> quantities = containers.combine(
-            inventory == null ? null : inventory.getItems(),
+            inventoryItems,
             equipment == null ? null : equipment.getItems());
-        if (quantities == null) { return false; }
         cannon.observe(client.getVarpValue(VarPlayerID.DROPCANNON),
-            client.getVarbitValue(VarbitID.MCANNON_DECAYED) == 1, inventory.getItems(), itemManager::canonicalize);
+            client.getVarbitValue(VarbitID.MCANNON_DECAYED) == 1, inventoryItems, itemManager::canonicalize);
         checkpointExtraContainers();
         cannon.deployed().forEach((id, quantity) -> quantities.computeIfAbsent(id, ignored -> new long[3]));
         Map<Integer, Long> bankPouch = RunePouchContents.include(quantities, pouchContents);

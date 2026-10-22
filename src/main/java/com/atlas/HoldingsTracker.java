@@ -74,20 +74,20 @@ final class HoldingsTracker
 
     Map<Integer, long[]> combine(Item[] inventory, Item[] equipment)
     {
-        // Wait for the live inventory, but RuneLite can leave WORN absent until the first
-        // item is equipped. An unequipped login must not wait for that event to start.
-        if (inventory == null) { return null; }
+        // Called after logged-in updates settle. RuneLite can omit either empty carried
+        // container until its first item arrives; neither is a prerequisite for tracking.
         Map<Integer, long[]> result = new LinkedHashMap<>();
         if (bank != null) { add(result, bank, 0); }
         else { add(result, remoteBank, 0); }
         add(result, count(inventory), 1);
-        if (equipment != null) { add(result, count(equipment), 2); }
+        add(result, count(equipment), 2);
         return result;
     }
 
     private Map<Integer, Long> count(Item[] items)
     {
         Map<Integer, Long> result = new LinkedHashMap<>();
+        if (items == null) { return result; }
         for (Item item : items)
         {
             if (item.getId() < 0 || item.getQuantity() <= 0 || isPlaceholder.test(item.getId())) { continue; }

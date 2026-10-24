@@ -108,6 +108,7 @@ public class AtlasPlugin extends Plugin
     private Map<Integer, Long> quotes = new HashMap<>();
     private Map<Integer, Long> pouchContents = new HashMap<>();
     private final HerbSackTracker herbSack = new HerbSackTracker();
+    private final PotionStorageTracker potionStorage = new PotionStorageTracker();
     private final CannonTracker cannon = new CannonTracker();
     private final SoulBearerTracker soulBearer = new SoulBearerTracker();
     private long soulBearerSpent;
@@ -248,6 +249,7 @@ public class AtlasPlugin extends Plugin
         quotes = new HashMap<>();
         pouchContents = new HashMap<>();
         herbSack.reset();
+        potionStorage.reset();
         cannon.reset(); lastCannonStage = -1; lastCannonDecayed = false;
         soulBearer.cancel(); soulBearerSpent = 0; soulBearerTransfers.clear();
         sackPresent = false;
@@ -538,6 +540,7 @@ public class AtlasPlugin extends Plugin
                     containers.restoreBank(restored.bank);
                     containers.restoreRemoteBank(restored.extraContainers.get(SoulBearerTracker.REMOTE_BANK_KEY));
                     herbSack.restore(restored.herbSack);
+                    potionStorage.restore(restored.extraContainers.get(PotionStorageTracker.STORAGE_KEY));
                     cannon.restore(restored.extraContainers.get(CannonTracker.STORAGE_KEY));
                     for (BagTracker bag : bags) { bag.restore(restored.extraContainers.get(bag.kind.name())); }
                     bankTime = containers.getBankTime();
@@ -567,6 +570,7 @@ public class AtlasPlugin extends Plugin
     {
         if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null) { return false; }
         lastCapture = now;
+        potionStorage.read(client);
         // Bank data is only refreshed while observed. A closed/missing bank must not block live gear updates.
         ItemContainer bank = isBankOpen() ? client.getItemContainer(InventoryID.BANK) : null;
         if (bank != null)
@@ -590,6 +594,7 @@ public class AtlasPlugin extends Plugin
         if (sackPresent && !hasSack) { herbSack.invalidate(); }
         sackPresent = hasSack;
         Map<Integer, Long> bankSack = new LinkedHashMap<>(herbSack.include(quantities));
+        potionStorage.include(quantities).forEach((id, quantity) -> bankSack.merge(id, quantity, Long::sum));
         for (BagTracker bag : bags)
         {
             boolean present = bag.location(quantities) >= 0;
@@ -634,6 +639,9 @@ public class AtlasPlugin extends Plugin
     }
 
     private long quote(int id)
+    { return potionStorage.price(id, this::rawQuote); }
+
+    private long rawQuote(int id)
     {
         long price = itemManager.getItemPriceWithSource(id, false);
         // A temporarily missing quote must not invent a loss for previously priced holdings.
@@ -648,7 +656,8 @@ public class AtlasPlugin extends Plugin
     private boolean isBankOpen()
     {
         Widget bank = client.getWidget(InterfaceID.Bankmain.ITEMS_CONTAINER);
-        return bank != null && !bank.isHidden();
+        Widget potions = client.getWidget(InterfaceID.Bankmain.POTIONSTORE_ITEMS);
+        return (bank != null && !bank.isHidden()) || (potions != null && !potions.isHidden());
     }
 
     private void manualSnapshot()
@@ -686,7 +695,7 @@ public class AtlasPlugin extends Plugin
         Wealth.Session before = saved.activeSession;
         if (sackPresent && !herbSack.confirmed()) { session.markEstimated(); }
         if (cannon.estimated()) { session.markEstimated(); }
-        boolean reconcile = herbSack.takeReconciliation() | cannon.takeReconciliation();
+        boolean reconcile = herbSack.takeReconciliation() | cannon.takeReconciliation() | potionStorage.takeReconciliation();
         for (BagTracker bag : bags)
         {
             if (presentBags.contains(bag.kind) && bag.estimated()) { session.markEstimated(); }
@@ -697,7 +706,7 @@ public class AtlasPlugin extends Plugin
             session.spend(ItemID.BLOODRUNE, soulBearerSpent, quote(ItemID.BLOODRUNE));
             session.spend(ItemID.SOULRUNE, soulBearerSpent, quote(ItemID.SOULRUNE));
         }
-        session.observe(live, bankSynced, reconcile, soulBearerTransfers);
+        session.observe(potionStorage.forSession(live), bankSynced, reconcile, soulBearerTransfers);
         soulBearerSpent = 0; soulBearerTransfers.clear();
         Wealth.Session current = session.current();
         saved = saved.withActiveSession(current);
@@ -788,6 +797,8 @@ public class AtlasPlugin extends Plugin
         Map<String, Map<Integer, Long>> contents = new LinkedHashMap<>(saved.extraContainers);
         contents.put(SoulBearerTracker.REMOTE_BANK_KEY, containers.remoteBankSnapshot());
         contents.put(CannonTracker.STORAGE_KEY, cannon.deployed());
+        if (potionStorage.unlocked()) { contents.put(PotionStorageTracker.STORAGE_KEY, potionStorage.contents()); }
+        else { contents.remove(PotionStorageTracker.STORAGE_KEY); }
         for (BagTracker bag : bags)
         { if (bag.contents() != null) { contents.put(bag.kind.name(), bag.contents()); } }
         if (contents.equals(saved.extraContainers)) { return; }
@@ -842,7 +853,7 @@ public class AtlasPlugin extends Plugin
         { return "Inventory/equipment are live. Bank unknown; open it once to include it."
             + (sackStatus.isEmpty() ? "" : "<br>" + sackStatus); }
         if (!sackStatus.isEmpty()) { return sackStatus; }
-        return bankSynced ? "Tracking bank + live inventory + equipment"
+        return bankSynced ? ""
             : "Saved bank contents + live inventory/equipment. Open your bank when convenient to refresh.";
     }
 

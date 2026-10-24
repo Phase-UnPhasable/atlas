@@ -139,7 +139,8 @@ final class WealthPanel extends PluginPanel
         valueKind.setText(snapshot == null ? "Net Worth" : snapshot.bankTime == 0 ? "Known items only"
             : bankObserved ? "Net Worth" : "Estimated Net Worth");
         breakdown.setText(snapshot == null ? "Open your bank to begin" :
-            "<html>• Bank " + (snapshot.bankTime == 0 ? "unknown" : compact(snapshot.bank()))
+            "<html>• Bank " + (snapshot.bankTime == 0 ? "unknown" : compact(snapshot.bank() - potionStorageValue()))
+                + (hasPotionStorage() ? "<br>• Potion storage " + compact(potionStorageValue()) : "")
                 + "<br>• Inventory " + compact(snapshot.inventory())
                 + "<br>• Equipment " + compact(snapshot.equipment())
                 + (snapshot.deployed() == 0 ? "" : "<br>• Deployed cannon " + compact(snapshot.deployed())) + "</html>");
@@ -164,6 +165,18 @@ final class WealthPanel extends PluginPanel
         if (dashboard != null) { dashboard.refresh(); }
         revalidate();
         repaint();
+    }
+
+    private boolean hasPotionStorage()
+    { return state != null && state.extraContainers.containsKey(PotionStorageTracker.STORAGE_KEY); }
+
+    private long potionQuantity(int id)
+    { return hasPotionStorage() ? state.extraContainers.get(PotionStorageTracker.STORAGE_KEY).getOrDefault(id, 0L) : 0; }
+
+    private long potionStorageValue()
+    {
+        return snapshot == null ? 0 : snapshot.items.values().stream()
+            .mapToLong(item -> potionQuantity(item.id) * item.price).sum();
     }
 
     private void openDashboard()
@@ -213,7 +226,7 @@ final class WealthPanel extends PluginPanel
         private final JButton next = button("Next");
         private int page;
         private final JComboBox<String> range = new JComboBox<>(new String[]{"24 hours", "7 days", "30 days", "1 year", "All history"});
-        private final JComboBox<String> metric = new JComboBox<>(new String[]{"GE net worth", "HA value", "Unique items", "Market movement", "Item changes"});
+        private final JComboBox<String> metric = new JComboBox<>(new String[]{"GE net worth", "HA value", "Unique items", "Market movement"});
         private final JLabel changes = label("", 15, Color.WHITE);
         private final JLabel coverage = label("", 12, MUTED);
         private final Graph graph = new Graph();
@@ -358,7 +371,7 @@ final class WealthPanel extends PluginPanel
             tools.add(coverage);
             root.add(tools, BorderLayout.NORTH);
             root.add(graph, BorderLayout.CENTER);
-            root.add(label("<html>Blue = net worth · Green = market movement · Amber = item changes<br>Item changes include loot, trades, spending and supplies used; this is not a profit ledger.<br>Points every 5 minutes while playing, on logout, or when you record a snapshot.<br>Totals may use saved bank contents until your next visit.<br>Prices are GE guide estimates; missing quotes may retain a previous quote.</html>", 11, MUTED), BorderLayout.SOUTH);
+            root.add(label("<html>Blue = net worth · Change bars: green = gain, red = loss<br>Each bar shows change between recorded snapshots; hover for times and value.<br>Snapshots every 5 minutes while playing, on logout, or when you record a snapshot.<br>Totals may use saved bank contents until your next visit.<br>Prices are GE guide estimates; missing quotes may retain a previous quote.</html>", 11, MUTED), BorderLayout.SOUTH);
             range.setSelectedIndex(2);
             range.addActionListener(e -> refreshHistory());
             metric.addActionListener(e -> refreshHistory());
@@ -370,7 +383,7 @@ final class WealthPanel extends PluginPanel
             total.setText(snapshot == null ? "--" : compact(snapshot.total()) + " GP"
                 + (snapshot.bankTime == 0 ? " · Known items only" : bankObserved ? "" : " · Estimated net worth"));
             locations.setText(snapshot == null ? "Open your bank to start tracking." :
-                "Bank " + (snapshot.bankTime == 0 ? "unknown" : compact(snapshot.bank())) + "   +   Inventory " + compact(snapshot.inventory())
+                "Bank " + (snapshot.bankTime == 0 ? "unknown" : compact(snapshot.bank() - potionStorageValue())) + (hasPotionStorage() ? "   +   Potion storage " + compact(potionStorageValue()) : "") + "   +   Inventory " + compact(snapshot.inventory())
                     + "   +   Equipment " + compact(snapshot.equipment())
                     + (snapshot.deployed() == 0 ? "" : "   +   Cannon " + compact(snapshot.deployed()))
                     + "     |     " + snapshot.items.size() + " unique items");
@@ -379,6 +392,8 @@ final class WealthPanel extends PluginPanel
                 + " · Bank last seen " + TIME.format(Instant.ofEpochMilli(snapshot.bankTime)))
                 + (statusMessage.isEmpty() ? "" : "<br>" + statusMessage)
                 + (snapshot.unpriced() > 0 ? "<br>" + snapshot.unpriced() + " items have no GE quote" : "") + "</html>");
+            if (hasPotionStorage() && scope.getItemCount() == 4) { scope.addItem("Potion storage"); }
+            else if (!hasPotionStorage() && scope.getItemCount() == 5) { scope.removeItemAt(4); }
             record.setEnabled(synced);
             refreshItems();
             refreshHistory();
@@ -391,9 +406,10 @@ final class WealthPanel extends PluginPanel
         {
             switch (scope.getSelectedIndex())
             {
-                case 1: return entry.bank;
+                case 1: return entry.bank - potionQuantity(entry.id);
                 case 2: return entry.inventory;
                 case 3: return entry.equipment;
+                case 4: return potionQuantity(entry.id);
                 default: return entry.quantity();
             }
         }
@@ -450,7 +466,8 @@ final class WealthPanel extends PluginPanel
             card.setPreferredSize(new Dimension(132, 112));
             String tooltip = "<html>" + escape(entry.name) + "<br>Quantity: " + exact(quantity(entry))
                 + "<br>GE each: " + exact(entry.price) + " GP<br>GE stack: " + exact(quantity(entry) * entry.price)
-                + " GP<br>HA stack: " + exact(quantity(entry) * entry.alch) + " GP<br>Bank: " + exact(entry.bank)
+                + " GP<br>HA stack: " + exact(quantity(entry) * entry.alch) + " GP<br>Bank: " + exact(entry.bank - potionQuantity(entry.id))
+                + (potionQuantity(entry.id) == 0 ? "" : " · Potion storage: " + exact(potionQuantity(entry.id)) + " dose(s)/unfinished potions")
                 + " · Inventory: " + exact(entry.inventory) + " · Equipment: " + exact(entry.equipment)
                 + (entry.deployed == 0 ? "" : " · Deployed cannon: " + exact(entry.deployed)) + "</html>";
             JLabel quantity = label(exact(quantity(entry)), 11, new Color(255, 211, 94));
@@ -492,9 +509,9 @@ final class WealthPanel extends PluginPanel
                 Wealth.Point first = points.get(0), last = points.get(points.size() - 1);
                 boolean attributed = points.stream().skip(1).allMatch(p -> p.attributed);
                 changes.setText("<html>Net change " + signed(last.total - first.total) + " GP"
-                    + (attributed ? "<br><font color='#44d394'>Market " + signed(last.market - first.market) + " GP</font>"
-                        + " &nbsp; · &nbsp; <font color='#ffd35e'>Item changes " + signed(last.items - first.items) + " GP</font>"
-                        : "<br>Market/item split unavailable across an unsynced device gap.") + "</html>");
+                    + "<br><font color='#44d394'>" + (attributed ? "Market " : "Known market ")
+                    + signed(knownChange(points, true)) + " GP</font>"
+                    + (attributed ? "" : "<br>Partial market breakdown: missing intervals excluded.") + "</html>");
                 coverage.setText(points.size() == 1 ? "First snapshot saved. More points will appear as you play." :
                     TIME.format(Instant.ofEpochMilli(first.time)) + " – " + TIME.format(Instant.ofEpochMilli(last.time))
                         + " · " + points.size() + " recorded points (local time)");
@@ -550,11 +567,23 @@ final class WealthPanel extends PluginPanel
         }
     }
 
+    /** Unknown intervals must not be silently attributed to item gains/losses. */
+    static long knownChange(List<Wealth.Point> points, boolean market)
+    {
+        long total = 0;
+        for (int i = 1; i < points.size(); i++)
+        {
+            Wealth.Point before = points.get(i - 1), after = points.get(i);
+            if (after.attributed) { total += market ? after.market - before.market : after.items - before.items; }
+        }
+        return total;
+    }
+
     static final class Graph extends JPanel
     {
         private List<Wealth.Point> points = Collections.emptyList();
         private int metric;
-        private long origin;
+        private final java.util.Map<Wealth.Point, Long> intervalValues = new java.util.IdentityHashMap<>();
         Graph()
         {
             setBackground(CARD);
@@ -566,18 +595,30 @@ final class WealthPanel extends PluginPanel
         {
             this.points = points;
             this.metric = metric;
-            origin = points.isEmpty() ? 0 : metric == 3 ? points.get(0).market : metric == 4 ? points.get(0).items : 0;
+            intervalValues.clear();
+
+            for (int i = 0; i < points.size(); i++)
+            {
+                Wealth.Point point = points.get(i);
+                long known = 0;
+                if (i > 0 && point.attributed)
+                {
+                    Wealth.Point before = points.get(i - 1);
+                    known += metric == 3 ? point.market - before.market : point.items - before.items;
+                }
+                intervalValues.put(point, known);
+            }
             repaint();
         }
 
-        private long value(Wealth.Point p)
+        long value(Wealth.Point p)
         {
             switch (metric)
             {
                 case 1: return p.alch;
                 case 2: return p.unique;
-                case 3: return p.market - origin;
-                case 4: return p.items - origin;
+                case 3: return intervalValues.getOrDefault(p, 0L);
+                case 4: return intervalValues.getOrDefault(p, 0L);
                 default: return p.total;
             }
         }
@@ -589,11 +630,11 @@ final class WealthPanel extends PluginPanel
             Graphics2D g = (Graphics2D) graphics.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             int left = 70, right = getWidth() - 24, top = 28, bottom = getHeight() - 38;
-            if (metric >= 3 && points.stream().skip(1).anyMatch(p -> !p.attributed))
+            boolean gaps = metric >= 3 && points.stream().skip(1).anyMatch(p -> !p.attributed);
+            if (gaps)
             {
                 g.setColor(MUTED);
-                g.drawString("Market/item split unavailable across an unsynced device gap.", left, Math.max(50, getHeight() / 2));
-                g.dispose(); return;
+                g.drawString("Change per recorded interval; shaded gaps excluded.", left, 17);
             }
             if (points.isEmpty())
             {
@@ -602,6 +643,7 @@ final class WealthPanel extends PluginPanel
             }
             long min = points.stream().mapToLong(this::value).min().orElse(0);
             long max = points.stream().mapToLong(this::value).max().orElse(0);
+            if (metric >= 3) { min = Math.min(0, min); max = Math.max(0, max); }
             double padding = Math.max(1, (max - (double) min) * .15);
             double low = min - padding, high = max + padding;
             if (metric < 3) { low = Math.max(0, low); }
@@ -613,17 +655,61 @@ final class WealthPanel extends PluginPanel
                 g.setColor(MUTED); g.drawString(compact((long) (high - (high - low) * line / 4)), 8, y + 4);
             }
             long firstTime = points.get(0).time, lastTime = points.get(points.size() - 1).time;
+            if (metric >= 3)
+            {
+                int zero = bottom - (int) ((bottom - top) * -low / (high - low));
+                for (int i = 1; i < points.size(); i++)
+                {
+                    Wealth.Point before = points.get(i - 1), point = points.get(i);
+                    if (lastTime <= firstTime || point.time <= before.time) { continue; }
+                    int x1 = left + (int) ((right - left) * (before.time - (double) firstTime) / (lastTime - (double) firstTime));
+                    int x2 = left + (int) ((right - left) * (point.time - (double) firstTime) / (lastTime - (double) firstTime));
+                    if (!point.attributed)
+                    {
+                        g.setColor(new Color(158, 170, 190, 25));
+                        g.fillRect(x1, top, Math.max(1, x2 - x1), bottom - top);
+                        continue;
+                    }
+                    long change = value(point);
+                    if (change == 0) { continue; }
+                    int y = bottom - (int) ((bottom - top) * (change - low) / (high - low));
+                    int inset = x2 - x1 >= 5 ? 1 : 0;
+                    g.setColor(change > 0 ? GREEN : RED);
+                    g.fillRect(x1 + inset, change > 0 ? Math.min(y, zero - 1) : zero,
+                        Math.max(1, x2 - x1 - inset * 2), Math.max(1, Math.abs(y - zero)));
+                }
+                g.setColor(MUTED);
+                g.drawLine(left, zero, right, zero);
+                g.drawString("0", left - 14, zero + 4);
+                if (points.size() == 1)
+                { g.drawString("First snapshot saved. A second snapshot is needed for change bars.", left, top + 20); }
+                String start = TIME.format(Instant.ofEpochMilli(firstTime)), end = TIME.format(Instant.ofEpochMilli(lastTime));
+                g.drawString(start, left, bottom + 24);
+                g.drawString(end, right - g.getFontMetrics().stringWidth(end), bottom + 24);
+                g.dispose();
+                return;
+            }
             Path2D path = new Path2D.Double();
             List<int[]> coordinates = new ArrayList<>();
             for (Wealth.Point point : points)
             {
                 int x = firstTime == lastTime ? (left + right) / 2 : left + (int) ((right - left) * (point.time - (double) firstTime) / (lastTime - (double) firstTime));
                 int y = bottom - (int) ((bottom - top) * (value(point) - low) / (high - low));
-                if (coordinates.isEmpty()) { path.moveTo(x, y); } else { path.lineTo(x, y); }
+                if (coordinates.isEmpty() || (metric >= 3 && !point.attributed))
+                {
+                    path.moveTo(x, y);
+                    if (!coordinates.isEmpty())
+                    {
+                        int gapStart = coordinates.get(coordinates.size() - 1)[0];
+                        g.setColor(new Color(158, 170, 190, 25));
+                        g.fillRect(gapStart, top, Math.max(1, x - gapStart), bottom - top);
+                    }
+                }
+                else { path.lineTo(x, y); }
                 coordinates.add(new int[]{x, y});
             }
             Color color = metric == 3 ? GREEN : metric == 4 ? new Color(255, 211, 94) : BLUE;
-            if (coordinates.size() > 1)
+            if (coordinates.size() > 1 && metric < 3)
             {
                 Path2D area = (Path2D) path.clone();
                 area.lineTo(coordinates.get(coordinates.size() - 1)[0], bottom); area.lineTo(coordinates.get(0)[0], bottom); area.closePath();
@@ -643,11 +729,26 @@ final class WealthPanel extends PluginPanel
         public String getToolTipText(MouseEvent event)
         {
             if (points.isEmpty()) { return null; }
-            if (metric >= 3 && points.stream().skip(1).anyMatch(p -> !p.attributed))
-            { return "Net worth remains available; this gap cannot be split accurately into market and item changes."; }
             long first = points.get(0).time, last = points.get(points.size() - 1).time;
             double fraction = Math.max(0, Math.min(1, (event.getX() - 70.0) / Math.max(1, getWidth() - 94.0)));
             double time = first + fraction * (last - (double) first);
+            if (metric >= 3)
+            {
+                for (int i = 1; i < points.size(); i++)
+                {
+                    Wealth.Point before = points.get(i - 1), point = points.get(i);
+                    if (time >= before.time && (time < point.time || i == points.size() - 1))
+                    {
+                        if (!point.attributed)
+                        { return "Missing market/item attribution for this interval; excluded from known changes."; }
+                        long change = value(point);
+                        return TIME.format(Instant.ofEpochMilli(before.time)) + " – "
+                            + TIME.format(Instant.ofEpochMilli(point.time)) + " · "
+                            + (change > 0 ? "+" : "") + exact(change) + " GP";
+                    }
+                }
+            }
+            if (metric >= 3) { return "First snapshot is a baseline; waiting for another snapshot."; }
             Wealth.Point nearest = points.stream().min(Comparator.comparingDouble(p -> Math.abs(p.time - time))).get();
             return TIME.format(Instant.ofEpochMilli(nearest.time)) + " · " + exact(value(nearest)) + (metric == 2 ? " items" : " GP");
         }

@@ -1,6 +1,6 @@
 # Atlas
 
-A RuneLite plugin for bank value, net-worth history, and session gains and losses. Track banked items, inventory, equipment, supported containers and your deployed cannon; browse and sort holdings, separate market movements from item changes, and optionally share completed history through your RuneLite account.
+A RuneLite plugin for bank value, net-worth history, and session gains and losses. Track banked items, inventory, equipment, supported containers and your deployed cannon; browse and sort holdings, view market movement, and optionally share completed history through your RuneLite account.
 
 ## Use it
 
@@ -101,3 +101,14 @@ Saved/unknown bank data makes a session an **Estimate**. The first actual bank o
 - Reopen the bank after indirect bank changes. Missing storage/charges are disclosed limitations rather than silently counted as known assets.
 
 Automated arithmetic/storage checks do not establish in-game correctness; the player must confirm the behavior above.
+
+### Potion storage
+
+On characters that have unlocked potion storage, Atlas includes the stored potions in net worth and adds a Potion storage balance and item-list filter. Locked characters do not see these controls. Stored finished potions are shown as one-dose equivalents; unfinished potions are counted individually. The existing bank balance excludes the separately displayed potion-storage balance.
+
+Potion quantities come from the game's read-only `POTIONSTORE_DOSES` query, the same query used by RuneLite's Bank Tags potion storage support. Counts are read after login and container updates settle, without relying on which withdrawal bottle size is selected. Saved counts use Atlas's existing character-specific container storage and history sync. Empty vials in potion storage are not included.
+
+For unlocked characters, supported finished potions use a consistent per-dose GE estimate derived from their largest available bottle (rounded to whole GP per dose). This keeps deposits, withdrawals and decanting neutral in both total wealth and session changes. Session accounting combines bottle sizes into doses at fixed session prices; drinking a dose still records its cost. The first storage observation reconciles previously untracked contents rather than booking them as loot.
+
+Test before release: log in with storage unlocked, compare its dose counts, withdraw and redeposit 1-, 2-, 3- and 4-dose bottles (including noted and bulk withdrawals), drink one dose and return the remainder, and move potions between the normal bank and potion storage. Transfers should leave session change and net worth unchanged at fixed prices, while drinking costs one dose. Test two-dose mixes and unfinished potions, relogging, and PC/Deck history sync. On a character without the unlock, confirm the storage balance and filter are absent and normal potion pricing is unchanged.
+Market Movement uses green/red interval bars with missing intervals shaded. GE net worth, HA value and unique items retain line charts. Item Changes is no longer offered in the graph selector; existing history remains intact.
